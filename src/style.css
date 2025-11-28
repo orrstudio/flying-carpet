@@ -1,0 +1,23 @@
+/* Небольшая высота страницы чтобы был скролл */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: auto;
+  font-family: system-ui, sans-serif;
+}
+
+/* Сделаем страницу длинной, чтобы скролл менял прогресс по пути */
+body::after {
+  content: "";
+  display: block;
+  height: 300vh; /* увеличьте/уменьшите для тестов */
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
