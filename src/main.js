@@ -19,8 +19,13 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // ---- Камера ----
+// We'll parent the camera to `cameraHolder` so it follows the path transform exactly.
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 2, 10);
+camera.position.set(0, 0, 0);
+const cameraHolder = new THREE.Object3D();
+cameraHolder.name = 'cameraHolder';
+cameraHolder.add(camera);
+scene.add(cameraHolder);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enabled = false;
@@ -46,19 +51,25 @@ let currentPath = null;
 let currentCloudInst = null;
 
 // debug helpers: визуальные маркеры для отладки позиции на пути и позиции камеры
-const debugPathMarker = new THREE.Mesh(
-  new THREE.SphereGeometry(0.2, 8, 8),
-  new THREE.MeshBasicMaterial({ color: 0xff0000 })
-);
-debugPathMarker.visible = true;
+const debugPathMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+debugPathMat.depthTest = false;
+debugPathMat.depthWrite = false;
+const debugPathMarker = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12), debugPathMat);
+debugPathMarker.frustumCulled = false;
+debugPathMarker.renderOrder = 9999;
 scene.add(debugPathMarker);
-const debugCamMarker = new THREE.Mesh(
-  new THREE.SphereGeometry(0.18, 8, 8),
-  new THREE.MeshBasicMaterial({ color: 0x00ff00 })
-);
-debugCamMarker.visible = true;
+
+const debugCamMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+debugCamMat.depthTest = false;
+debugCamMat.depthWrite = false;
+const debugCamMarker = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), debugCamMat);
+debugCamMarker.frustumCulled = false;
+debugCamMarker.renderOrder = 9999;
 scene.add(debugCamMarker);
+
 const debugLineMat = new THREE.LineBasicMaterial({ color: 0xffff00 });
+debugLineMat.depthTest = false;
+debugLineMat.depthWrite = false;
 let debugLine = null;
 
 // troika text
@@ -203,33 +214,37 @@ function animate() {
   const right = computeRight(tangent);
   const up = new THREE.Vector3().crossVectors(right, tangent).normalize();
 
-  // place camera exactly on the path (optionally with small vertical offset)
-  camera.position.copy(pos).addScaledVector(up, cameraHeightOffset);
+  // Move the cameraHolder to the path point so camera strictly follows the trajectory.
+  cameraHolder.position.copy(pos);
+  // Keep the camera at a local offset above the path point (height only).
+  camera.position.set(0, cameraHeightOffset, 0);
 
-  // compute look target a bit ahead on the path
+  // Orient the holder to look forward along the tangent (so camera faces forward).
   const lookAheadT2 = THREE.MathUtils.clamp(currentT + (currentConfig.visual?.lookAheadT ?? 0.02), 0, 1);
   const lookAheadPos = currentPath.getPointAt(lookAheadT2);
+  const forwardPoint = new THREE.Vector3().copy(lookAheadPos);
+  cameraHolder.lookAt(forwardPoint);
 
-  // allow small mouse-based look offset (does NOT change camera position)
+  // Mouse look: small offset applied to look target (does NOT move camera world position)
   const lookOffsetX = mouseX * (currentConfig.visual?.mouseLookStrength ?? 0.6) * 0.2;
   const lookOffsetY = mouseY * (currentConfig.visual?.mouseLookStrength ?? 0.6) * 0.2;
-  const offsetTarget = new THREE.Vector3()
-    .addScaledVector(right, lookOffsetX)
-    .addScaledVector(up, lookOffsetY);
+  const offsetTarget = new THREE.Vector3().addScaledVector(right, lookOffsetX).addScaledVector(up, lookOffsetY);
   const lookTarget = new THREE.Vector3(lookAheadPos.x, lookAheadPos.y, lookAheadPos.z).add(offsetTarget);
-
   camera.lookAt(lookTarget.x, lookTarget.y, lookTarget.z);
 
   // --- debug visuals: update markers and connecting line ---
   try {
     debugPathMarker.position.copy(pos);
-    debugCamMarker.position.copy(camera.position);
+    // camera position in world space
+    const camWorldPos = new THREE.Vector3();
+    camera.getWorldPosition(camWorldPos);
+    debugCamMarker.position.copy(camWorldPos);
     if (debugLine) {
       scene.remove(debugLine);
       debugLine.geometry.dispose();
       debugLine = null;
     }
-    const pts = [pos.clone(), camera.position.clone()];
+    const pts = [pos.clone(), camWorldPos.clone()];
     const geom = new THREE.BufferGeometry().setFromPoints(pts);
     debugLine = new THREE.Line(geom, debugLineMat);
     scene.add(debugLine);
@@ -237,9 +252,11 @@ function animate() {
     // ignore debug errors
   }
 
-  // центрируем небо на камеру, чтобы не было артефактов при больших дистанциях
+  // центрируем небо на мировую позицию камеры, чтобы не было артефактов при больших дистанциях
   if (currentConfig.sky?.autoFollowCamera) {
-    skyMesh.position.copy(camera.position);
+    const camWorldPos2 = new THREE.Vector3();
+    camera.getWorldPosition(camWorldPos2);
+    skyMesh.position.copy(camWorldPos2);
   }
 
   // анимация облаков (как раньше)
