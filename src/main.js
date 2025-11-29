@@ -2,9 +2,16 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import './style.css';
 
-// ---- Сцена и рендерер ----
+import { generateSinusPath, createPathFromPoints, updateLineMesh } from './pathUtils.js';
+import { createCloudsForPath, removeClouds } from './cloudManager.js';
+import { createSky, updateSky } from './sky.js';
+import { add3DText } from './text3d.js';
+
+import configDefault from './config.js';
+
+// ---- Сцена ----
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x87ceeb, 0.0025); // лёгкий туман для глубины
+scene.fog = new THREE.FogExp2(0x87ceeb, 0.0025);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -15,121 +22,219 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 2, 10);
 
-// Для отладки можно включить Controls (необязательно)
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enabled = false; // выключаем в основном сценарии
+controls.enabled = false;
 
-// ---- Свет ----
-const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-scene.add(ambient);
+// свет
+const ambient = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambient);
+const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(5, 10, 7); scene.add(sun);
 
-const sun = new THREE.DirectionalLight(0xffffff, 1);
-sun.position.set(5, 10, 7);
-scene.add(sun);
-
-// ---- Создаём spline путь (CatmullRom) ----
-const points = [
-  new THREE.Vector3(0, 2, 0),
-  new THREE.Vector3(10, 3, -20),
-  new THREE.Vector3(20, 6, -40),
-  new THREE.Vector3(0, 12, -70),
-  new THREE.Vector3(-20, 6, -90),
-  new THREE.Vector3(-40, 3, -110),
-  new THREE.Vector3(0, 2, -140)
-];
-const path = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.5);
-
-// Визуализация пути для разработки (опционально)
-const lineGeometry = new THREE.BufferGeometry().setFromPoints(path.getPoints(200));
-const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
-const line = new THREE.Line(lineGeometry, lineMat);
-scene.add(line);
-
-// ---- Инстансированные облака ----
-const CLOUD_COUNT = 200;
-const cloudGeo = new THREE.SphereGeometry(1.0, 8, 6); // простая форма облака
-const cloudMat = new THREE.MeshStandardMaterial({
-  color: 0xffffff,
-  roughness: 0.9,
-  metalness: 0.0,
-  transparent: true,
-  opacity: 0.95
-});
-const instanced = new THREE.InstancedMesh(cloudGeo, cloudMat, CLOUD_COUNT);
-instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-scene.add(instanced);
-
-// Расположим облака вдоль пути с небольшими смещениями
-const dummy = new THREE.Object3D();
-for (let i = 0; i < CLOUD_COUNT; i++) {
-  const u = i / CLOUD_COUNT; // позиция вдоль кривой
-  const center = path.getPointAt(u);
-  // случайное смещение перпендикулярно пути
-  const offsetX = (Math.random() - 0.5) * 12;
-  const offsetY = (Math.random() - 0.5) * 6;
-  const offsetZ = (Math.random() - 0.5) * 8;
-
-  dummy.position.set(center.x + offsetX, center.y + offsetY, center.z + offsetZ);
-  const scale = 0.8 + Math.random() * 3.0;
-  dummy.scale.set(scale * (0.8 + Math.random() * 0.8), scale, scale * (0.8 + Math.random() * 0.8));
-  dummy.rotation.set(Math.random() * 0.5, Math.random() * Math.PI * 2, Math.random() * 0.5);
-  dummy.updateMatrix();
-  instanced.setMatrixAt(i, dummy.matrix);
+// sky: создаём со стандартным радиусом из конфига (НЕ будем масштабировать)
+let currentConfig = configDefault;
+const skyRadius = Math.max(currentConfig.sky?.radius ?? 600, currentConfig.sky?.minRadius ?? 600);
+const { mesh: skyMesh, uniforms: skyUniforms } = createSky(skyRadius);
+skyMesh.frustumCulled = false;
+scene.add(skyMesh);
+// цвета в шейдере как запасной clearColor
+if (skyUniforms && skyUniforms.bottomColor && skyUniforms.bottomColor.value) {
+  renderer.setClearColor(skyUniforms.bottomColor.value);
 }
 
-// Можно добавить цветовые вариации через инстансный цвет (опционально)
-instanced.instanceColor = null; // оставляем однотонным для простоты
+// line placeholder / объекты
+let line = null;
+let currentPath = null;
+let currentCloudInst = null;
 
-// ---- Скролл → прогресс по пути ----
+// troika text
+const titleFixed = add3DText(scene, { text: 'flying‑carpet', position: new THREE.Vector3(0, 6, -10), fontSize: 1.6 });
+const titleOnPath = add3DText(scene, { text: 'you reached the cloud', position: new THREE.Vector3(0, 4, -30), fontSize: 1.2 });
+titleOnPath.visible = false;
+
+// target/current progress
 let targetT = 0;
 let currentT = 0;
 
-// Обновляем targetT от скролла страницы
+// mouse
+let mouseX = 0, mouseY = 0;
+window.addEventListener('mousemove', (e) => {
+  mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+  mouseY = (e.clientY / window.innerHeight) * 2 - 1;
+}, { passive: true });
+
+// wheel/touch (мягкий)
+function wheelAdjust(deltaY) {
+  const sensitivity = currentConfig.visual?.wheelSensitivity ?? 0.0009;
+  const step = deltaY * sensitivity;
+  targetT = THREE.MathUtils.clamp(targetT + step, 0, 1);
+}
+window.addEventListener('wheel', (e) => wheelAdjust(e.deltaY), { passive: true });
+
+let lastTouchY = null;
+window.addEventListener('touchstart', (e) => { if (e.touches && e.touches[0]) lastTouchY = e.touches[0].clientY; }, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (!lastTouchY) { if (e.touches && e.touches[0]) lastTouchY = e.touches[0].clientY; return; }
+  const currentY = e.touches[0].clientY;
+  const delta = lastTouchY - currentY;
+  const step = delta * (currentConfig.visual?.touchSensitivity ?? 0.0012);
+  targetT = THREE.MathUtils.clamp(targetT + step, 0, 1);
+  lastTouchY = currentY;
+}, { passive: true });
+window.addEventListener('touchend', () => { lastTouchY = null; }, { passive: true });
+
 function onScroll() {
-  // прогресс от 0 до 1
   const scrollTop = window.scrollY || window.pageYOffset;
   const scrollHeight = document.body.scrollHeight - window.innerHeight;
-  targetT = scrollHeight > 0 ? THREE.MathUtils.clamp(scrollTop / scrollHeight, 0, 1) : 0;
+  if (scrollHeight > 0) targetT = THREE.MathUtils.clamp(scrollTop / scrollHeight, 0, 1);
 }
 window.addEventListener('scroll', onScroll, { passive: true });
 
-// ---- Анимация ----
+// ---- build path / apply config ----
+function buildPathFromConfig(cfg) {
+  if (cfg.path && cfg.path.useGenerate) {
+    const pts = generateSinusPath({
+      length: cfg.path.length,
+      segments: cfg.path.segments,
+      lateralAmplitude: cfg.path.lateralAmplitude,
+      verticalAmplitude: cfg.path.verticalAmplitude,
+      seed: cfg.path.seed ?? 0
+    });
+    return createPathFromPoints(pts);
+  } else if (cfg.path && Array.isArray(cfg.path.points) && cfg.path.points.length > 0) {
+    const pts = cfg.path.points.map(p => new THREE.Vector3(p.x, p.y, p.z));
+    return createPathFromPoints(pts);
+  } else {
+    const pts = generateSinusPath({ length: 140, segments: 7, lateralAmplitude: 12, verticalAmplitude: 6 });
+    return createPathFromPoints(pts);
+  }
+}
+
+async function applyConfig(cfg) {
+  // удаляем старые облака/линию
+  if (currentCloudInst) { removeClouds(scene, currentCloudInst); currentCloudInst = null; }
+  if (line) { scene.remove(line); try { line.geometry.dispose(); } catch{}; try { line.material.dispose(); } catch{}; line = null; }
+
+  currentPath = buildPathFromConfig(cfg);
+  line = updateLineMesh(line, currentPath, cfg.visual?.lineSegments ?? 200);
+  scene.add(line);
+
+  // НЕ масштабируем skyMesh. Вместо этого адаптируем camera.far и ограничиваем radius логикой конфигурации
+  try {
+    const curveLength = currentPath.getLength ? currentPath.getLength() : (cfg.path?.length ?? 600);
+    // нужная "дальность видимости" пропорциональна длине пути, но ограничим верхом
+    const neededFar = Math.max(1000, Math.min(cfg.sky?.maxRadius ?? 2000, curveLength * 1.8));
+    if (camera.far < neededFar) { camera.far = neededFar; camera.updateProjectionMatrix(); }
+
+    // Если авто-позиционирование включено — оставим фиксированный радиус (cfg.sky.radius) и будем центровать сферу на камере
+    // (никакого масштабирования!) — это предотвращает артефакты при больших значениях.
+    const desiredRadius = Math.max(cfg.sky?.minRadius ?? 600, Math.min(cfg.sky?.radius ?? 600, cfg.sky?.maxRadius ?? 2000));
+    // если надо, можно пересоздать геометрию вместо масштабирования — но обычно достаточно фиксированного radius
+    // Обновляем clearColor для запасного фона
+    if (skyUniforms && skyUniforms.bottomColor && skyUniforms.bottomColor.value) {
+      renderer.setClearColor(skyUniforms.bottomColor.value);
+    }
+  } catch (e) {
+    console.warn('applyConfig: sky adjustments failed', e);
+  }
+
+  // создаём облака
+  try {
+    currentCloudInst = await createCloudsForPath(scene, currentPath, {
+      cloudCount: cfg.clouds?.cloudCount ?? 80,
+      particlesPerCloud: cfg.clouds?.particlesPerCloud ?? 8,
+      width: cfg.clouds?.width ?? 12,
+      bias: cfg.clouds?.bias ?? 0,
+      modelUrl: cfg.clouds?.modelUrl ?? '/assets/models/cloud.glb'
+    });
+  } catch (e) {
+    console.warn('applyConfig: createCloudsForPath failed', e);
+  }
+
+  // clamp targets
+  targetT = THREE.MathUtils.clamp(targetT, 0, 1);
+  currentT = THREE.MathUtils.clamp(currentT, 0, 1);
+}
+
+// инициируем
+applyConfig(currentConfig).catch(console.error);
+
+// HMR
+if (import.meta.hot) {
+  import.meta.hot.accept('./config.js', ({ default: newConfig }) => {
+    currentConfig = newConfig;
+    applyConfig(newConfig).catch(console.error);
+  });
+}
+
+// ---- render loop ----
 const clock = new THREE.Clock();
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
+  const t = clock.getElapsedTime();
 
-  // сглаживаем движение камеры
   currentT = THREE.MathUtils.lerp(currentT, targetT, Math.min(1, dt * 6));
-
-  // позиция камеры на кривой и "взгляд" немного вперед по пути
-  const pos = path.getPointAt(currentT);
+  const pos = currentPath.getPointAt(currentT);
   const lookAheadT = THREE.MathUtils.clamp(currentT + 0.02, 0, 1);
-  const lookPos = path.getPointAt(lookAheadT);
+  const lookPos = currentPath.getPointAt(lookAheadT);
 
-  camera.position.lerp(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z + 6), 0.15); // небольшое смещение назад по Z
+  const targetCamPos = new THREE.Vector3(pos.x, pos.y + 1.2, pos.z + 6);
+  camera.position.lerp(targetCamPos, currentConfig.visual?.cameraLerp ?? 0.15);
+
+  const lookOffsetX = mouseX * (currentConfig.visual?.mouseLookStrength ?? 0.6);
+  const lookOffsetY = mouseY * (currentConfig.visual?.mouseLookStrength ?? 0.6);
+  camera.position.x += (lookOffsetX - camera.position.x) * 0.02;
+  camera.position.y += (lookOffsetY - camera.position.y) * 0.02;
+
   camera.lookAt(lookPos.x, lookPos.y, lookPos.z);
 
-  // Небольшая анимация облаков (плавающая)
-  const time = performance.now() * 0.001;
-  for (let i = 0; i < CLOUD_COUNT; i++) {
-    instanced.getMatrixAt(i, dummy.matrix);
-    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
-    const wobble = Math.sin(time * 0.5 + i) * 0.02;
-    dummy.position.y += wobble;
-    dummy.updateMatrix();
-    instanced.setMatrixAt(i, dummy.matrix);
+  // центрируем небо на камеру, чтобы не было артефактов при больших дистанциях
+  if (currentConfig.sky?.autoFollowCamera) {
+    skyMesh.position.copy(camera.position);
   }
-  instanced.instanceMatrix.needsUpdate = true;
+
+  // анимация облаков (как раньше)
+  if (currentCloudInst && currentCloudInst.userData) {
+    const { particlesPerCloud, cloudCount, centers, baseOffsets } = currentCloudInst.userData;
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+    for (let c = 0; c < cloudCount; c++) {
+      const center = centers[c];
+      const groupWobbleY = Math.sin(t * 0.6 + c) * 0.14;
+      const groupWobbleX = Math.cos(t * 0.3 + c * 1.3) * 0.08;
+      for (let p = 0; p < particlesPerCloud; p++) {
+        const off = baseOffsets[c * particlesPerCloud + p] || new THREE.Vector3();
+        const px = center.x + off.x + groupWobbleX;
+        const py = center.y + off.y + groupWobbleY;
+        const pz = center.z + off.z;
+        dummy.position.set(px, py, pz);
+        const s = 0.6 + 0.5 * Math.abs(Math.sin(t * 0.6 + c * 0.3 + p));
+        dummy.scale.setScalar(s);
+        dummy.rotation.set(0, Math.sin(t * 0.2 + idx * 0.13) * 0.4, 0);
+        dummy.updateMatrix();
+        currentCloudInst.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+    currentCloudInst.instanceMatrix.needsUpdate = true;
+  }
+
+  // текст по пути
+  titleOnPath.visible = (currentT > 0.18 && currentT < 0.28) || (currentT > 0.52 && currentT < 0.62);
+
+  // обновляем sky shader
+  updateSky(skyUniforms, t);
+
+  // troika
+  if (titleFixed && titleFixed.sync) titleFixed.sync();
+  if (titleOnPath && titleOnPath.sync) titleOnPath.sync();
 
   renderer.render(scene, camera);
 }
 animate();
 
-// ---- Ресайз ----
-function onWindowResize() {
+// ресайз
+window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-}
-window.addEventListener('resize', onWindowResize);
+});

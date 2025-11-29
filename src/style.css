@@ -1,19 +1,18 @@
-/* Небольшая высота страницы чтобы был скролл */
+/* Жёсткая блокировка нативного скролла:
+   - overflow: hidden убирает прокрутку страницы
+   - touch-action: none отключает стандартные жесты браузера (позволяет перехватить тач)
+*/
 html, body {
+  height: 100%;
   margin: 0;
   padding: 0;
-  height: 100%;
-  overflow: auto;
+  overflow: hidden;
+  touch-action: none;
   font-family: system-ui, sans-serif;
+  background: linear-gradient(#87ceeb, #ffcf7f); /* запасной фон на случай проблем со шейдером */
 }
 
-/* Сделаем страницу длинной, чтобы скролл менял прогресс по пути */
-body::after {
-  content: "";
-  display: block;
-  height: 300vh; /* увеличьте/уменьшите для тестов */
-}
-
+/* Канвас фиксируется поверх страницы */
 canvas {
   position: fixed;
   inset: 0;
@@ -21,3 +20,5 @@ canvas {
   height: 100%;
   display: block;
 }
+
+/* Если захочешь позже вернуть нативный скролл — закомментируй overflow и touch-action выше */
