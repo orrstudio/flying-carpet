@@ -24,7 +24,7 @@ export default {
     touchSensitivity: 0.0002,
     mouseLookStrength: 0.6,
     cameraLerp: 0.25
-
+    ,
     // camera-follow параметры
     cameraFollowDistance: 6,  // отступ камеры назад вдоль касательной
     cameraHeightOffset: 1.6,  // вертикальный сдвиг камеры

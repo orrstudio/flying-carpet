@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import './style.css';
 
-import { generateSinusPath, createPathFromPoints, updateLineMesh } from './pathUtils.js';
+import { generateSinusPath, createPathFromPoints, updateLineMesh, computeRight } from './pathUtils.js';
 import { createCloudsForPath, removeClouds } from './cloudManager.js';
 import { createSky, updateSky } from './sky.js';
 import { add3DText } from './text3d.js';
@@ -178,15 +178,35 @@ function animate() {
   const lookAheadT = THREE.MathUtils.clamp(currentT + 0.02, 0, 1);
   const lookPos = currentPath.getPointAt(lookAheadT);
 
-  const targetCamPos = new THREE.Vector3(pos.x, pos.y + 1.2, pos.z + 6);
+  // position camera strictly relative to the path tangent so it follows turns
+  const cameraFollowDistance = (currentConfig.visual?.cameraFollowDistance ?? 6);
+  const cameraHeightOffset = (currentConfig.visual?.cameraHeightOffset ?? 1.6);
+
+  // tangent points forward along the path; we place camera behind along -tangent
+  const tangent = currentPath.getTangentAt(currentT).clone().normalize();
+  const right = computeRight(tangent);
+  const up = new THREE.Vector3().crossVectors(right, tangent).normalize();
+
+  const targetCamPos = new THREE.Vector3().copy(pos)
+    .addScaledVector(tangent, -cameraFollowDistance)
+    .addScaledVector(up, cameraHeightOffset);
+
+  // apply smoothing lerp
   camera.position.lerp(targetCamPos, currentConfig.visual?.cameraLerp ?? 0.15);
 
+  // mouse look: offset camera and look target in path-local space
   const lookOffsetX = mouseX * (currentConfig.visual?.mouseLookStrength ?? 0.6);
   const lookOffsetY = mouseY * (currentConfig.visual?.mouseLookStrength ?? 0.6);
-  camera.position.x += (lookOffsetX - camera.position.x) * 0.02;
-  camera.position.y += (lookOffsetY - camera.position.y) * 0.02;
+  // small smoothing for offsets
+  const offsetTarget = new THREE.Vector3()
+    .addScaledVector(right, lookOffsetX)
+    .addScaledVector(up, lookOffsetY);
+  // apply offset to camera position smoothly
+  camera.position.add(offsetTarget.clone().multiplyScalar(0.02));
 
-  camera.lookAt(lookPos.x, lookPos.y, lookPos.z);
+  // compute look target along the path (ahead) and apply same local offsets
+  const lookTarget = new THREE.Vector3(lookPos.x, lookPos.y, lookPos.z).add(offsetTarget);
+  camera.lookAt(lookTarget.x, lookTarget.y, lookTarget.z);
 
   // центрируем небо на камеру, чтобы не было артефактов при больших дистанциях
   if (currentConfig.sky?.autoFollowCamera) {
