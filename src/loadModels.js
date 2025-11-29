@@ -37,7 +37,8 @@ export async function loadCloudInstanced(modelUrl = '/assets/models/cloud.glb', 
     const mat = Array.isArray(mesh.material) ? mesh.material[0].clone() : mesh.material.clone();
     mat.transparent = true;
     mat.opacity = mat.opacity ?? 1.0;
-    mat.depthWrite = false; // для мягкости наложения
+    // включаем запись глубины, чтобы дальние объекты не рендерились поверх ближних
+    mat.depthWrite = true;
 
     const particlesPerCloud = 6; // если используем одну модель как puff — можно варьировать
     const total = count * particlesPerCloud;
@@ -81,7 +82,7 @@ export async function loadCloudInstanced(modelUrl = '/assets/models/cloud.glb', 
 // Improved fallback: similar structure but uses simple spheres as puffs
 export function createFallbackCloudInstanced(count = 60, particlesPerCloud = 8) {
   const puffGeo = new THREE.IcosahedronGeometry(0.8, 1); // немного «фацетная», но приятнее
-  const puffMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false });
+  const puffMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: true });
   const total = count * particlesPerCloud;
   const inst = new THREE.InstancedMesh(puffGeo, puffMat, total);
   inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

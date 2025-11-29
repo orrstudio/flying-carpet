@@ -269,24 +269,32 @@ function animate() {
     skyMesh.position.copy(camWorldPos2);
   }
 
-  // анимация облаков (как раньше)
-  if (currentCloudInst && currentCloudInst.userData) {
-    const { particlesPerCloud, cloudCount, centers, baseOffsets } = currentCloudInst.userData;
+  // анимация облаков: каждое облако движется вдоль пути по собственной базовой U + общий cloudOffset
+  if (currentCloudInst && currentCloudInst.userData && currentPath) {
+    const ud = currentCloudInst.userData;
+    const { particlesPerCloud, cloudCount, baseUs, cloudsMeta, baseOffsets } = ud;
     const dummy = new THREE.Object3D();
+    // advance global offset (same speed for all clouds so they never обгоняют друг друга)
+    ud.cloudOffset = (ud.cloudOffset + (ud.cloudSpeed || 0.015) * dt) % 1.0;
     let idx = 0;
     for (let c = 0; c < cloudCount; c++) {
-      const center = centers[c];
-      const groupWobbleY = Math.sin(t * 0.6 + c) * 0.14;
-      const groupWobbleX = Math.cos(t * 0.3 + c * 1.3) * 0.08;
+      const meta = cloudsMeta[c];
+      const baseU = baseUs[c] || meta.u || 0;
+      const uPos = (baseU + ud.cloudOffset) % 1.0;
+      const basePoint = currentPath.getPointAt(uPos);
+      const tangentC = currentPath.getTangentAt(uPos).normalize();
+      const rightC = computeRight(tangentC);
+      const centerWorld = basePoint.clone().addScaledVector(rightC, meta.lateralShift);
+      centerWorld.y += meta.vy || 0;
       for (let p = 0; p < particlesPerCloud; p++) {
         const off = baseOffsets[c * particlesPerCloud + p] || new THREE.Vector3();
-        const px = center.x + off.x + groupWobbleX;
-        const py = center.y + off.y + groupWobbleY;
-        const pz = center.z + off.z;
+        const px = centerWorld.x + off.x;
+        const py = centerWorld.y + off.y;
+        const pz = centerWorld.z + off.z;
         dummy.position.set(px, py, pz);
-        const s = 0.6 + 0.5 * Math.abs(Math.sin(t * 0.6 + c * 0.3 + p));
+        const s = ud.cloudScale || 1.0;
         dummy.scale.setScalar(s);
-        dummy.rotation.set(0, Math.sin(t * 0.2 + idx * 0.13) * 0.4, 0);
+        dummy.rotation.set(0, Math.sin(t * 0.2 + idx * 0.13) * 0.18, 0);
         dummy.updateMatrix();
         currentCloudInst.setMatrixAt(idx++, dummy.matrix);
       }

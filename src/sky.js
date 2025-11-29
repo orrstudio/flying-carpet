@@ -3,10 +3,11 @@ import * as THREE from 'three';
 
 export function createSky(radius = 400) {
   const uniforms = {
-    topColor: { value: new THREE.Color(0x0f2a5a) },     // смените цвета по вкусу
-    bottomColor: { value: new THREE.Color(0xffcf7f) },
-    offset: { value: 0.0 },
-    exponent: { value: 0.6 },
+    // верх — тёмно-синий, низ — очень светло-голубой
+    topColor: { value: new THREE.Color(0x00193a) },
+    bottomColor: { value: new THREE.Color(0x7fcaff) },
+    offset: { value: -0.08 },
+    exponent: { value: 0.85 },
     time: { value: 0.0 }
   };
 
@@ -44,7 +45,7 @@ export function createSky(radius = 400) {
     depthWrite: false
   });
 
-  const geo = new THREE.SphereGeometry(radius, 32, 15);
+  const geo = new THREE.SphereGeometry(radius, 60, 20);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   return { mesh, uniforms };
