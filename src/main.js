@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import './style.css';
 
-import { generateSinusPath, createPathFromPoints, updateLineMesh, computeRight } from './pathUtils.js';
+import { generateSinusPath, createPathFromPoints, updateLineMesh, computeRight, createThinPathMesh } from './pathUtils.js';
 import { createCloudsForPath, removeClouds } from './cloudManager.js';
 import { createSky, updateSky } from './sky.js';
 import { add3DText } from './text3d.js';
@@ -141,8 +141,18 @@ async function applyConfig(cfg) {
   if (line) { scene.remove(line); try { line.geometry.dispose(); } catch{}; try { line.material.dispose(); } catch{}; line = null; }
 
   currentPath = buildPathFromConfig(cfg);
-  line = updateLineMesh(line, currentPath, cfg.visual?.lineSegments ?? 200);
-  scene.add(line);
+  // replace faint line with a slightly thicker thin-path mesh for better visibility
+  if (line) { scene.remove(line); try { line.geometry.dispose(); } catch{}; try { line.material.dispose(); } catch{}; line = null; }
+  const pathWidth = currentConfig.visual?.pathWidth ?? 0.03;
+  const pathSegments = cfg.visual?.lineSegments ?? 200;
+  try {
+    line = createThinPathMesh(currentPath, pathWidth, pathSegments, { color: 0xffffff, opacity: 0.3 });
+    scene.add(line);
+  } catch (e) {
+    // fallback to old thin line if mesh creation fails
+    line = updateLineMesh(line, currentPath, cfg.visual?.lineSegments ?? 200);
+    scene.add(line);
+  }
 
   // НЕ масштабируем skyMesh. Вместо этого адаптируем camera.far и ограничиваем radius логикой конфигурации
   try {

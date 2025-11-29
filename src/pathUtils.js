@@ -27,6 +27,49 @@ export function updateLineMesh(lineMesh, path, segments = 200) {
   return lineMesh;
 }
 
+// create a thin ribbon along the path to make the visible path slightly thicker
+export function createThinPathMesh(path, width = 1.6, segments = 200, materialOptions = {}) {
+  const pts = path.getPoints(segments);
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+
+  for (let i = 0; i < pts.length; i++) {
+    const u = i / Math.max(1, pts.length - 1);
+    const p = pts[i];
+    const tangent = path.getTangentAt(u).clone().normalize();
+    const right = computeRight(tangent);
+    const leftPos = new THREE.Vector3().copy(p).addScaledVector(right, -width * 0.5);
+    const rightPos = new THREE.Vector3().copy(p).addScaledVector(right, width * 0.5);
+
+    positions.push(leftPos.x, leftPos.y, leftPos.z);
+    positions.push(rightPos.x, rightPos.y, rightPos.z);
+
+    uvs.push(u, 0);
+    uvs.push(u, 1);
+  }
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = i * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, c, b);
+    indices.push(c, d, b);
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+
+  const mat = new THREE.MeshBasicMaterial(Object.assign({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide }, materialOptions));
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 // helper to compute a perpendicular (right) vector for a tangent
 export function computeRight(tangent) {
   const up = new THREE.Vector3(0, 1, 0);
