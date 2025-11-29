@@ -9,6 +9,9 @@ export async function createCloudsForPath(scene, path, options = {}) {
     particlesPerCloud = 8,
     width = 12,      // макс смещение по бокам
     bias = 0,        // сдвиг в сторону (-1 left .. 1 right)
+    // minOffset: минимальная относительная дистанция от центра пути (0..1).
+    // Значение 0.2 означает, что облако будет как минимум на 20% от `width` вбок.
+    minOffset = 0.5,
     modelUrl = '/assets/models/cloud.glb'
   } = options;
 
@@ -58,8 +61,12 @@ export async function createCloudsForPath(scene, path, options = {}) {
       const center = path.getPointAt(u).clone();
       const tangent = path.getTangentAt(u).normalize();
       const right = computeRight(tangent);
-      const lateral = (Math.random() - 0.5) * 2; // [-1..1]
-      const shift = (lateral + bias) * 0.5 * width;
+
+      // выбираем знак (влево/вправо) и случайную величину в диапазоне [minOffset .. 1]
+      const sign = Math.random() < 0.5 ? -1 : 1;
+      const magnitude = minOffset + Math.random() * (1 - minOffset);
+      const lateralSigned = sign * magnitude; // в диапазоне [-1..-minOffset] U [minOffset..1]
+      const shift = (lateralSigned + bias) * 0.5 * width;
       center.addScaledVector(right, shift);
       centers.push(center);
     }

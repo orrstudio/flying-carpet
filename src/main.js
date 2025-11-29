@@ -45,6 +45,22 @@ let line = null;
 let currentPath = null;
 let currentCloudInst = null;
 
+// debug helpers: визуальные маркеры для отладки позиции на пути и позиции камеры
+const debugPathMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.2, 8, 8),
+  new THREE.MeshBasicMaterial({ color: 0xff0000 })
+);
+debugPathMarker.visible = true;
+scene.add(debugPathMarker);
+const debugCamMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.18, 8, 8),
+  new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+);
+debugCamMarker.visible = true;
+scene.add(debugCamMarker);
+const debugLineMat = new THREE.LineBasicMaterial({ color: 0xffff00 });
+let debugLine = null;
+
 // troika text
 const titleFixed = add3DText(scene, { text: 'flying‑carpet', position: new THREE.Vector3(0, 6, -10), fontSize: 1.6 });
 const titleOnPath = add3DText(scene, { text: 'you reached the cloud', position: new THREE.Vector3(0, 4, -30), fontSize: 1.2 });
@@ -187,26 +203,39 @@ function animate() {
   const right = computeRight(tangent);
   const up = new THREE.Vector3().crossVectors(right, tangent).normalize();
 
-  const targetCamPos = new THREE.Vector3().copy(pos)
-    .addScaledVector(tangent, -cameraFollowDistance)
-    .addScaledVector(up, cameraHeightOffset);
+  // place camera exactly on the path (optionally with small vertical offset)
+  camera.position.copy(pos).addScaledVector(up, cameraHeightOffset);
 
-  // apply smoothing lerp
-  camera.position.lerp(targetCamPos, currentConfig.visual?.cameraLerp ?? 0.15);
+  // compute look target a bit ahead on the path
+  const lookAheadT2 = THREE.MathUtils.clamp(currentT + (currentConfig.visual?.lookAheadT ?? 0.02), 0, 1);
+  const lookAheadPos = currentPath.getPointAt(lookAheadT2);
 
-  // mouse look: offset camera and look target in path-local space
-  const lookOffsetX = mouseX * (currentConfig.visual?.mouseLookStrength ?? 0.6);
-  const lookOffsetY = mouseY * (currentConfig.visual?.mouseLookStrength ?? 0.6);
-  // small smoothing for offsets
+  // allow small mouse-based look offset (does NOT change camera position)
+  const lookOffsetX = mouseX * (currentConfig.visual?.mouseLookStrength ?? 0.6) * 0.2;
+  const lookOffsetY = mouseY * (currentConfig.visual?.mouseLookStrength ?? 0.6) * 0.2;
   const offsetTarget = new THREE.Vector3()
     .addScaledVector(right, lookOffsetX)
     .addScaledVector(up, lookOffsetY);
-  // apply offset to camera position smoothly
-  camera.position.add(offsetTarget.clone().multiplyScalar(0.02));
+  const lookTarget = new THREE.Vector3(lookAheadPos.x, lookAheadPos.y, lookAheadPos.z).add(offsetTarget);
 
-  // compute look target along the path (ahead) and apply same local offsets
-  const lookTarget = new THREE.Vector3(lookPos.x, lookPos.y, lookPos.z).add(offsetTarget);
   camera.lookAt(lookTarget.x, lookTarget.y, lookTarget.z);
+
+  // --- debug visuals: update markers and connecting line ---
+  try {
+    debugPathMarker.position.copy(pos);
+    debugCamMarker.position.copy(camera.position);
+    if (debugLine) {
+      scene.remove(debugLine);
+      debugLine.geometry.dispose();
+      debugLine = null;
+    }
+    const pts = [pos.clone(), camera.position.clone()];
+    const geom = new THREE.BufferGeometry().setFromPoints(pts);
+    debugLine = new THREE.Line(geom, debugLineMat);
+    scene.add(debugLine);
+  } catch (e) {
+    // ignore debug errors
+  }
 
   // центрируем небо на камеру, чтобы не было артефактов при больших дистанциях
   if (currentConfig.sky?.autoFollowCamera) {
