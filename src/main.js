@@ -40,9 +40,9 @@ const skyRadius = Math.max(currentConfig.sky?.radius ?? 600, currentConfig.sky?.
 const { mesh: skyMesh, uniforms: skyUniforms } = createSky(skyRadius);
 skyMesh.frustumCulled = false;
 scene.add(skyMesh);
-// цвета в шейдере: используем верхний цвет как запасной clearColor
-if (skyUniforms && skyUniforms.topColor && skyUniforms.topColor.value) {
-  renderer.setClearColor(skyUniforms.topColor.value);
+// цвета в шейдере как запасной clearColor
+if (skyUniforms && skyUniforms.bottomColor && skyUniforms.bottomColor.value) {
+  renderer.setClearColor(skyUniforms.bottomColor.value);
 }
 
 // line placeholder / объекты
@@ -166,8 +166,8 @@ async function applyConfig(cfg) {
     const desiredRadius = Math.max(cfg.sky?.minRadius ?? 600, Math.min(cfg.sky?.radius ?? 600, cfg.sky?.maxRadius ?? 2000));
     // если надо, можно пересоздать геометрию вместо масштабирования — но обычно достаточно фиксированного radius
     // Обновляем clearColor для запасного фона
-    if (skyUniforms && skyUniforms.topColor && skyUniforms.topColor.value) {
-      renderer.setClearColor(skyUniforms.topColor.value);
+    if (skyUniforms && skyUniforms.bottomColor && skyUniforms.bottomColor.value) {
+      renderer.setClearColor(skyUniforms.bottomColor.value);
     }
   } catch (e) {
     console.warn('applyConfig: sky adjustments failed', e);
